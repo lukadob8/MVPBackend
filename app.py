@@ -359,7 +359,7 @@ def answers():
         try:
             conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
             cursor = conn.cursor()
-            cursor.execute("SELECT answers.*, users.username FROM answers INNER JOIN users ON users.id = answers.userId WHERE answers.questionId=?", [questionId])
+            cursor.execute("SELECT answers.*, users.username, COUNT(likes.answerId) AS likeCount FROM answers INNER JOIN users ON users.id = answers.userId INNER JOIN likes ON likes.answerId = answers.id WHERE answers.questionId = ? GROUP BY users.username", [questionId])
             answers = cursor.fetchall()
         except Exception as error:
             print("SOMETHING WENT WRONG (THIS IS LAZY)")
@@ -375,11 +375,12 @@ def answers():
                 for answer in answers:
                     userData.append({
                         "questionId": answer[1],
-                        "answerId": answer[4],
+                        "answerId": answer[3],
                         "userId": answer[0],
-                        "username": answer[4],
+                        "username": answer[5],
                         "content": answer[2],
-                        "createdAt": answer[3]
+                        "createdAt": answer[4],
+                        "amount": answer[6]
                     })
                 return Response(json.dumps(userData, default=str), mimetype="application/json", status=200)
             else:
@@ -401,9 +402,9 @@ def answers():
             cursor.execute("INSERT INTO answers(userId, questionId, content) VALUES(?, ?, ?)", [userId, questionId, content])
             conn.commit()
             rows = cursor.rowcount
-            answerId = cursor.lastrowid()
+            answerId = cursor.lastrowid
             cursor.execute("SELECT answers.*, users.username FROM answers INNER JOIN users ON users.id = answers.userId WHERE answers.id=?", [answerId])
-            answer = cursor.fetchone()
+            answer = cursor.fetchall()
         except Exception as error:
             print("SOMETHING WENT WRONG (THIS IS LAZY)")
             print(error)
@@ -415,12 +416,12 @@ def answers():
                 conn.close()
             if rows == 1:
                 userData = {
-                    "questionId": answer[1],
-                    "answerId": answer[4],
-                    "userId": answer[0],
-                    "username": answer[5],
-                    "content": answer[2],
-                    "createdAt": answer[3]
+                    "questionId": answer[0][1],
+                    "answerId": answer[0][3],
+                    "userId": answer[0][0],
+                    "username": answer[0][5],
+                    "content": answer[0][2],
+                    "createdAt": answer[0][4]
                 }
                 return Response(json.dumps(userData, default=str), mimetype="application/json", status=201)
             else:
@@ -468,5 +469,220 @@ def answers():
                     "createdAt": answer[0][3]
                 }
                 return Response(json.dumps(userData, default=str), mimetype="application/json", status=201)
+            else:
+                return Response("An error occurred.", mimetype="text/html", status=500)
+    elif request.method == "DELETE":
+        conn = None
+        cursor = None
+        loginToken = request.json.get("loginToken")
+        answerId = request.json.get("answerId")
+        rows = None
+        try:
+            conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
+            cursor = conn.cursor()
+            cursor.execute("SELECT userId FROM user_session WHERE loginToken=?", [loginToken])
+            userId = cursor.fetchall()[0][0]
+            cursor.execute("SELECT userId FROM answers WHERE id=?", [answerId])
+            aOwner = cursor.fetchall()[0][0]
+            if aOwner == userId:
+                cursor.execute("DELETE FROM answers WHERE id=?", [answerId])
+                conn.commit()
+                rows = cursor.rowcount
+            else:
+                print("You can't delete that answer.")
+        except Exception as error:
+            print("SOMETHING WENT WRONG (THIS IS LAZY)")
+            print(error)
+        finally:
+            if cursor != None:
+                cursor.close()
+            if conn != None:
+                conn.rollback()
+                conn.close()
+            if rows == 1:
+                return Response("Answer deleted.", mimetype="text/html", status=204)
+            else:
+                return Response("An error occurred.", mimetype="text/html", status=500)
+
+@app.route('/api/likes', methods = ["GET", "POST", "DELETE"])
+def likes():
+    if request.method == "GET":
+        conn = None
+        cursor = None
+        answerId = request.args.get("answerId")
+        likes = None
+        try:
+            conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
+            cursor = conn.cursor()
+            cursor.execute("SELECT likes.*, users.username FROM likes INNER JOIN users ON users.id = likes.userId WHERE likes.answerId=?", [answerId])
+            likes = cursor.fetchall()
+        except Exception as error:
+            print("SOMETHING WENT WRONG (THIS IS LAZY)")
+            print(error)
+        finally:
+            if cursor != None:
+                cursor.close()
+            if conn != None:
+                conn.rollback()
+                conn.close()
+            if likes != None:
+                userData = []
+                for like in likes:
+                    userData.append({
+                        "answerId": like[0],
+                        "userId": like[1],
+                        "username": like[3]
+                    })
+                return Response(json.dumps(userData, default=str), mimetype="application/json", status=201)
+            else:
+                return Response("An error occurred.", mimetype="text/html", status=500)
+    elif request.method == "POST":
+        conn = None
+        cursor = None
+        loginToken = request.json.get("loginToken")
+        answerId = request.json.get("answerId")
+        rows = None
+        try:
+            conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
+            cursor = conn.cursor()
+            cursor.execute("SELECT userId FROM user_session WHERE loginToken=?", [loginToken])
+            userId = cursor.fetchall()[0][0]
+            cursor.execute("INSERT INTO likes(answerId, userId) VALUES(?, ?)", [answerId, userId])
+            conn.commit()
+            rows = cursor.rowcount
+        except Exception as error:
+            print("SOMETHING WENT WRONG (THIS IS LAZY)")
+            print(error)
+        finally:
+            if cursor != None:
+                cursor.close()
+            if conn != None:
+                conn.rollback()
+                conn.close()
+            if rows == 1:
+                return Response("Answer liked.", mimetype="text/html", status=201)
+            else:
+                return Response("An error occurred.", mimetype="text/html", status=500)
+    elif request.method == "DELETE":
+        conn = None
+        cursor = None
+        loginToken = request.json.get("loginToken")
+        answerId = request.json.get("answerId")
+        rows = None
+        try:
+            conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
+            cursor = conn.cursor()
+            cursor.execute("SELECT userId FROM user_session WHERE loginToken=?", [loginToken])
+            userId = cursor.fetchall()[0][0]
+            cursor.execute("DELETE FROM likes WHERE userId=? AND answerId=?", [userId, answerId])
+            conn.commit()
+            rows = cursor.rowcount
+        except Exception as error:
+            print("SOMETHING WENT WRONG (THIS IS LAZY)")
+            print(error)
+        finally:
+            if cursor != None:
+                cursor.close()
+            if conn != None:
+                conn.rollback()
+                conn.close()
+            if rows == 1:
+                return Response("Like removed.", mimetype="text/html", status=204)
+            else:
+                return Response("An error occured.", mimetype="text/html", status=500)
+
+@app.route('/api/bookmarks', methods = ["GET", "POST", "DELETE"])
+def bookmarks():
+    if request.method == "GET":
+        conn = None
+        cursor = None
+        loginToken = request.args.get("loginToken")
+        bookmarks = None
+        try:
+            conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
+            cursor = conn.cursor()
+            cursor.execute("SELECT userId FROM user_session WHERE loginToken=?", [loginToken])
+            userId = cursor.fetchall()[0][0]
+            cursor.execute("SELECT questions.* FROM questions INNER JOIN bookmarks ON questions.id = bookmarks.questionId WHERE bookmarks.userId=?", [userId])
+            bookmarks = cursor.fetchall()
+        except Exception as error:
+            print("SOMETHING WENT WRONG (THIS IS LAZY)")
+            print(error)
+        finally:
+            if cursor != None:
+                cursor.close()
+            if conn != None:
+                conn.rollback()
+                conn.close()
+            if bookmarks != None:
+                userData = []
+                for bookmark in bookmarks:
+                    userData.append({
+                        "title": bookmark[1],
+                        "content": bookmark[2],
+                        "createdAt": bookmark[3],
+                        "questionId": bookmark[4]
+                    })
+                return Response(json.dumps(userData, default=str), mimetype="application/json", status=200)
+            else:
+                return Response("An error occurred.", mimetype="text/html", status=500)
+    elif request.method == "POST":
+        conn = None
+        cursor = None
+        loginToken = request.json.get("loginToken")
+        questionId = request.json.get("questionId")
+        rows = None
+        try:
+            conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
+            cursor = conn.cursor()
+            cursor.execute("SELECT userId FROM user_session WHERE loginToken=?", [loginToken])
+            userId = cursor.fetchall()[0][0]
+            cursor.execute("INSERT INTO bookmarks(userId, questionId) VALUES(?, ?)", [userId, questionId])
+            conn.commit()
+            rows = cursor.rowcount
+            bookmarkId = cursor.lastrowid
+        except Exception as error:
+            print("SOMETHING WENT WRONG (THIS IS LAZY)")
+            print(error)
+        finally:
+            if cursor != None:
+                cursor.close()
+            if conn != None:
+                conn.rollback()
+                conn.close()
+            if rows == 1:
+                userData = {
+                    "questionId": questionId,
+                    "userId": userId,
+                    "bookmarkId": bookmarkId
+                }
+                return Response(json.dumps(userData, default=str), mimetype="application/json", status=201)
+            else: 
+                return Response("An error occured.", mimetype="text/html", status=500)
+    elif request.method == "DELETE":
+        conn = None
+        cursor = None
+        loginToken = request.json.get("loginToken")
+        questionId = request.json.get("questionId")
+        rows = None
+        try:
+            conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
+            cursor = conn.cursor()
+            cursor.execute("SELECT userId FROM user_session WHERE loginToken=?", [loginToken])
+            userId = cursor.fetchall()[0][0]
+            cursor.execute("DELETE FROM bookmarks WHERE questionId=? AND userId=?", [questionId, userId])
+            conn.commit()
+            rows = cursor.rowcount
+        except Exception as error:
+            print("SOMETHING WENT WRONG (THIS IS LAZY)")
+            print(error)
+        finally:
+            if cursor != None:
+                cursor.close()
+            if conn != None:
+                conn.rollback()
+                conn.close()
+            if rows == 1:
+                return Response("Bookmark removed.", mimetype="text/html", status=204)
             else:
                 return Response("An error occurred.", mimetype="text/html", status=500)
