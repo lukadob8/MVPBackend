@@ -8,9 +8,43 @@ from uuid import uuid4
 app = Flask(__name__)
 CORS(app)
 
-@app.route('/api/users', methods = ["POST", "PATCH", "DELETE"])
+@app.route('/api/users', methods = ["GET", "POST", "PATCH", "DELETE"])
 def userActions():
-    if request.method == "POST":
+    if request.method == "GET":
+        conn = None
+        cursor = None
+        userId = request.args.get("userId")
+        user = None
+        try:
+            conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
+            cursor = conn.cursor()
+            if userId != None:
+                cursor.execute("SELECT * FROM users WHERE id=?", [userId])
+            else:
+                cursor.execute("SELECT * FROM users")
+            users = cursor.fetchall()
+        except Exception as error:
+            print("SOMETHING WENT WRONG (THIS IS LAZY)")
+            print(error)
+        finally:
+            if cursor != None:
+                cursor.close()
+            if conn != None:
+                conn.rollback()
+                conn.close()
+            if users != None:
+                userData = []
+                for user in users:
+                    userData.append({
+                        "userId": user[4],
+                        "email": user[0],
+                        "username": user[1],
+                        "birthdate": user[3]
+                    })
+                return Response(json.dumps(userData, default=str), mimetype="application/json", status=200)
+            else:
+                return Response("Something went wrong!", mimetype="text/html", status=500)
+    elif request.method == "POST":
         conn = None
         cursor = None
         email = request.json.get("email")
@@ -198,15 +232,19 @@ def questions():
         conn = None
         cursor = None
         questionId = request.args.get("questionId")
+        userId = request.args.get("userId")
         questions = None
         try:
             conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
             cursor = conn.cursor()
-            if questionId == None:
+            if questionId == None and userId == None:
                 cursor.execute("SELECT questions.*, users.username FROM questions INNER JOIN users ON users.id = questions.userId")
                 questions = cursor.fetchall()
-            else:
+            elif questionId != None and userId == None:
                 cursor.execute("SELECT questions.*, users.username FROM questions INNER JOIN users ON users.id = questions.userId WHERE questions.id=?", [questionId])
+                questions = cursor.fetchall()
+            elif questionId == None and userId != None:
+                cursor.execute("SELECT questions.*, users.username FROM questions INNER JOIN users ON users.id = questions.userId WHERE questions.userId=?", [userId])
                 questions = cursor.fetchall()
         except Exception as error:
             print("SOMETHING WENT WRONG (THIS IS LAZY)")
@@ -359,7 +397,7 @@ def answers():
         try:
             conn = mariadb.connect(host = dbcreds.host, password = dbcreds.password, user = dbcreds.user, port = dbcreds.port, database = dbcreds.database)
             cursor = conn.cursor()
-            cursor.execute("SELECT answers.*, users.username, COUNT(likes.answerId) AS likeCount FROM answers INNER JOIN users ON users.id = answers.userId INNER JOIN likes ON likes.answerId = answers.id WHERE answers.questionId = ? GROUP BY users.username", [questionId])
+            cursor.execute("SELECT answers.*, users.username, COUNT(likes.answerId) AS likeCount FROM answers INNER JOIN users ON users.id = answers.userId INNER JOIN likes ON likes.answerId = answers.id WHERE answers.questionId = ? GROUP BY answers.id", [questionId])
             answers = cursor.fetchall()
         except Exception as error:
             print("SOMETHING WENT WRONG (THIS IS LAZY)")
@@ -380,7 +418,7 @@ def answers():
                         "username": answer[5],
                         "content": answer[2],
                         "createdAt": answer[4],
-                        "amount": answer[6]
+                        
                     })
                 return Response(json.dumps(userData, default=str), mimetype="application/json", status=200)
             else:
@@ -403,6 +441,8 @@ def answers():
             conn.commit()
             rows = cursor.rowcount
             answerId = cursor.lastrowid
+            cursor.execute("INSERT INTO likes(answerId, userId) VALUES(?, ?)", [answerId, 8])
+            conn.commit()
             cursor.execute("SELECT answers.*, users.username FROM answers INNER JOIN users ON users.id = answers.userId WHERE answers.id=?", [answerId])
             answer = cursor.fetchall()
         except Exception as error:
@@ -533,7 +573,7 @@ def likes():
                         "userId": like[1],
                         "username": like[3]
                     })
-                return Response(json.dumps(userData, default=str), mimetype="application/json", status=201)
+                return Response(json.dumps(userData, default=str), mimetype="application/json", status=200)
             else:
                 return Response("An error occurred.", mimetype="text/html", status=500)
     elif request.method == "POST":
@@ -603,7 +643,7 @@ def bookmarks():
             cursor = conn.cursor()
             cursor.execute("SELECT userId FROM user_session WHERE loginToken=?", [loginToken])
             userId = cursor.fetchall()[0][0]
-            cursor.execute("SELECT questions.* FROM questions INNER JOIN bookmarks ON questions.id = bookmarks.questionId WHERE bookmarks.userId=?", [userId])
+            cursor.execute("SELECT questions.*, bookmarks.userId FROM questions INNER JOIN bookmarks ON questions.id = bookmarks.questionId WHERE bookmarks.userId=?", [userId])
             bookmarks = cursor.fetchall()
         except Exception as error:
             print("SOMETHING WENT WRONG (THIS IS LAZY)")
@@ -621,7 +661,8 @@ def bookmarks():
                         "title": bookmark[1],
                         "content": bookmark[2],
                         "createdAt": bookmark[3],
-                        "questionId": bookmark[4]
+                        "questionId": bookmark[4],
+                        "userId": bookmark[5]
                     })
                 return Response(json.dumps(userData, default=str), mimetype="application/json", status=200)
             else:
